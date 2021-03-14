@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from collections import OrderedDict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -6,15 +7,21 @@ import dgl
 import dgl.nn as gnn
 import dgl.function as gfn
 
+"""
+    NN networks
+"""
 
 
-class Module(nn.Module):
+"""
+    Parent class
+"""
+class Net(nn.Module):
     '''
         Template of the module
         extended module should inherit from this
     '''
     def __init__(self, in_dim:int, out_dim:int):
-        super(Module, self).__init__()
+        super(Net, self).__init__()
         self.__in_dim = in_dim
         self.__out_dim = out_dim
 
@@ -37,27 +44,49 @@ class Module(nn.Module):
         pass
 
 
-class MLP(Module):
-    def __init__(self, in_dim, out_dim):
-        super(MLP,self).__init__(in_dim, out_dim)
-        self.__mlp = nn.Sequential(
-            nn.BatchNorm1d(in_dim),
-            nn.Linear(in_dim,128),
-            nn.ReLU(),
-            nn.BatchNorm1d(128),
-            nn.Linear(128,out_dim)
-        )
+"""
+    Sons
+"""
+class MLP(Net):
+    def __init__(self, in_dim: int, out_dim: int,
+                num_layers=2, num_hidden=128,
+                batch_norm:bool=True, softmax:bool=True):
 
-    def forward(self,g):
+        super(MLP, self).__init__(in_dim, out_dim)
+        __mlp = OrderedDict({})
+        i = 0
+        if num_layers <= 1:
+            num_hidden = out_dim
+        if batch_norm:
+            __mlp[f'bn{i}'] = nn.BatchNorm1d(in_dim)
+        __mlp[f'linear{i}'] = nn.Linear(in_dim, num_hidden)
+        __mlp[f'relu{i}'] = nn.ReLU()
+        i+=1
+        for _ in range(num_layers - 2):
+            if batch_norm:
+                __mlp[f'bn{i}'] = nn.BatchNorm1d(num_hidden)
+            __mlp[f'linear{i}'] = nn.Linear(num_hidden, num_hidden)
+            __mlp[f'relu{i}'] = nn.ReLU()
+            i += 1
+        if num_layers > 1:
+            if batch_norm:
+                __mlp[f'bn{i}'] = nn.BatchNorm1d(num_hidden)
+            __mlp[f'linear{i}'] = nn.Linear(num_hidden ,out_dim)
+            __mlp[f'relu{i}'] = nn.ReLU()
+        
+        if softmax:
+            __mlp['softmax'] = nn.Softmax()
 
-        # feat = Adj . feat
-        g.update_all(gfn.copy_u('feat', 'm'), gfn.sum('m', 'feat'))
+        self.__mlp = nn.Sequential(__mlp)
+
+    def forward(self, g):
+
         h = self.__mlp(g.ndata['feat'])
 
         return h
 
-class LightGCN(Module):
-    def __init__(self, in_feats, num_classes):
+class LightGCN(Net):
+    def __init__(self, in_feats:int, num_classes:int):
         super(LightGCN, self).__init__(in_feats, num_classes)
         self.conv1 = gnn.GraphConv(in_feats, num_classes)
 
@@ -67,8 +96,8 @@ class LightGCN(Module):
 
         return h
 
-class MultiGNN(Module):
-    def __init__(self, in_dim, out_dim, 
+class MultiGNN(Net):
+    def __init__(self, in_dim:int, out_dim:int, 
                         conv, conv_arg:dict={}, 
                         hid_dim:int=128, num_hid:int=1):
         super().__init__(in_dim, out_dim)

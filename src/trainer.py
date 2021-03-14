@@ -5,18 +5,15 @@ import sklearn.metrics as M
 import torch
 import dgl
 
+from data import dataset
+from module import Net, MLP, LightGCN, MultiGNN
+from diffusion import Processor  as P
+from diffusion import Initializer as Init
 
-from module import Module, MLP,LightGCN, MultiGNN
-from graph import GraphProcessor, IC
 
 
 class Trainer:
-    datasets = {
-        'cora':
-        dgl.data.CoraGraphDataset(raw_dir='../Data',
-                                force_reload=False,
-                                verbose=False)
-    }
+
 
     loss_fns = {
         'ce':torch.nn.CrossEntropyLoss()
@@ -32,56 +29,67 @@ class Trainer:
     BUF_PATH = '../Trainer-buffer'
 
     def __init__(self,
-                g,
-                model,
+                g: dgl.DGLHeteroGraph,
+                model=MLP,
                 processor=None,
                 loss_fn = 'ce',
-                metric_fn = 'f1-mic',
+                metric_fn='f1-mic',
+                
                 buf:bool  = False
                 ):
-        assert isinstance(g, (str, dgl.DGLHeteroGraph))
-        if isinstance(g, str):
-            assert g in self.datasets.keys()
-            g_name = g
-            g = self.datasets[g][0]
-        else:
-            g_name = 'cache'
-        assert 'feat' in g.ndata
-        assert 'label' in g.ndata
-
-        assert processor is None or issubclass(processor, GraphProcessor)
-        assert issubclass(type(model), Module) or issubclass(model, Module)
-        
-        assert 'train_mask' in g.ndata, f"{g.ndata}"
-        assert 'val_mask' in g.ndata, f"{g.ndata}"
-        assert 'test_mask'  in g.ndata, f"{g.ndata}"
+        """
+            g:              dgl.DGLHeteroGraph
+                    ndata: 'feat', 'label', 'train_mask', 'val_mask', 'test_mask'
+                    edata: not required
+            model:          a class inherit from Net
+                    or an instace of this class 
+            processor:       a class inherit form GraphProcessor
+            loss_fn:        str, should be in self.loss_fns.keys
+            metric_fn:      str, should be in self.metric_fns.keys
+            buf:            bool, whether to buffer the processed graph
+        """
+        self.__check_key(g)
+        assert processor is None or issubclass(processor.__class__, P.GraphProcessor)
+        assert issubclass(model.__class__,Net)
 
         assert loss_fn in self.loss_fns.keys()
         assert metric_fn in self.metric_fns.keys()
 
-
-        if buf and self.has_cache(g_name):
-            g = self.load_graph(g_name)
+        # check cached
+        if buf and self.has_cache(g.__name__):
+            g = self.load_graph(g.__name__)
         else:
             if processor is not None:
-                g = processor.process(g)
+                # if cached skill the diffusion
+                g_ = processor(g)
             if buf:
-                self.save_graph(g, g_name)
+                # if need buf, cache the processed graph
+                self.save_graph(g, g.__name__)
 
+        # split the batch into train, valid, test
         self.g = {}
         self.g['train'] = dgl.node_subgraph(g, g.ndata['train_mask'])
         self.g['valid'] = dgl.node_subgraph(g, g.ndata['val_mask'])
-        self.g['test']  = dgl.node_subgraph(g, g.ndata['test_mask'])
+        self.g['test'] = dgl.node_subgraph(g, g.ndata['test_mask'])
         
-        if issubclass(model, Module):
-            self.model = model(int(g.ndata['feat'].size(-1)), int(g.ndata['label'].max() - g.ndata['label'].min() + 1))
-        else:
-            self.model = model
+        # initialize nn model
+        self.model = model
         
-        
-
+        # loss and metric
         self.loss_fn = self.loss_fns[loss_fn]
         self.metric_fn = self.metric_fns[metric_fn]
+
+    def __check_key(self, g: dgl.DGLHeteroGraph,
+                nkeys=["feat", "label", "train_mask", "val_mask", "test_mask"],
+                ekeys=[]):
+        for key in nkeys:
+            if key not in g.ndata:
+                raise KeyError(f"{key} not in graph.ndata")
+        for key in ekeys:
+            if key not in g.edata:
+                raise KeyError(f"{key} not in graph.edata")
+
+        assert hasattr(g, '__name__'),"graph doesn't have a name"
 
     def save_graph(self, g:dgl.DGLHeteroGraph, prefix:str=''):
         if not os.path.exists(self.BUF_PATH):
@@ -100,7 +108,6 @@ class Trainer:
         return dgl.load_graphs(
             os.path.join(self.BUF_PATH, f"{prefix}_graph.bin")
         )[0][0]
-
 
     def train(self, lr:float=1e-3, epoch:int=100, test:bool=True):
 
@@ -143,9 +150,17 @@ class Trainer:
 
 if __name__ == '__main__':
     
+    g = dataset['cora']
+    num_feats = g.ndata['feat'].size(-1)
+    num_classes = (g.ndata['label'].max() - g.ndata['label'].min() + 1).item()
+
     trainer = Trainer(
-        g='cora',
-        processor=IC,
-        model=LightGCN
+        g=g,
+        #processor=P.HawkesIC(diffuse=False, hawkes_decay=0.99),
+        processor=P.IC(diffuse=False),
+        #model = MLP(num_feats, num_classes, num_layers=2, num_hidden=64,batch_norm=True, softmax=True)
+        model = LightGCN(num_feats, num_classes)
     ) 
-    trainer.train()
+    trainer.train(
+            lr = 2e-3,
+            epoch=200)
