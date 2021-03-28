@@ -99,7 +99,7 @@ class LightGCN(Net):
 class MultiGNN(Net):
     def __init__(self, in_dim:int, out_dim:int, 
                         conv, conv_arg:dict={}, 
-                        hid_dim:int=128, num_hid:int=1):
+                        hid_dim:int=128, num_layers:int=1):
         super().__init__(in_dim, out_dim)
         '''
             in_dim:  dim of feat
@@ -114,11 +114,17 @@ class MultiGNN(Net):
         self.self_loop = True if conv in (gnn.GraphConv, gnn.GATConv) else False
 
         self.__convs = nn.ModuleList([])
-        while num_hid:
-            num_hid -= 1
+        num_layers -= 1
+        self.__convs.append(conv(
+            in_dim,
+            hid_dim if num_layers else out_dim,
+            **conv_arg
+        ))
+        while num_layers:
+            num_layers -= 1
             self.__convs.append(conv(
-                in_dim,
-                hid_dim if num_hid else out_dim,
+                hid_dim,
+                hid_dim if num_layers else out_dim,
                 **conv_arg
             ))
             in_dim = hid_dim

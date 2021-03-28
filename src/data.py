@@ -2,7 +2,7 @@ import dgl
 
 
 
-
+# assertion
 def check_key(g: dgl.DGLHeteroGraph,
             nkeys=["feat", "label", "train_mask", "val_mask", "test_mask"],
             ekeys=[]):
@@ -13,6 +13,8 @@ def check_key(g: dgl.DGLHeteroGraph,
         if key not in g.edata:
             raise KeyError(f"{key} not in graph.edata")
 
+
+# core data function
 def cora()->dgl.DGLHeteroGraph:
     g = dgl.data.CoraGraphDataset(raw_dir='../Data',
                             force_reload=False,
@@ -21,10 +23,19 @@ def cora()->dgl.DGLHeteroGraph:
     g.__name__ = 'cora'
     return g
 
+def citeseer() -> dgl.DGLHeteroGraph:
+    g = dgl.data.CiteseerGraphDataset(raw_dir="../Data",
+                                    force_reload=False,
+                                    verbose=False)[0]
+    check_key(g)
+    g.__name__ = 'citeseer'
+    return g
 
 
+
+# Interface
 
 dataset = {
-    'cora':cora()
-    
+    'cora':cora(),
+    'citeseer':citeseer()
 }

@@ -1,6 +1,7 @@
 from abc import abstractmethod
 import torch
 import dgl
+import dgl.nn as gnn
 import dgl.function as gfn
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -32,7 +33,7 @@ class GraphProcessor:
                   edata: dict = {},
                   topo_change: bool = True) -> dgl.DGLHeteroGraph:
         '''
-            Build a new graph from the activated_key(torch.BoolTensor([num_nodes, num_nodes])) as adj matrix
+            Build a new graph from the new_key(torch.BoolTensor([num_nodes, num_nodes])) as adj matrix
             Args:
                 g,          dgl.DGLHeteroGraph  input graph, 
                 renew_key,  str    
@@ -41,14 +42,19 @@ class GraphProcessor:
             Returns:
                 dgl.DGLHeteroGraph
         '''
+        # assertion
         new_adj = g.ndata[new_key].bool()
         assert new_adj.shape == (g.number_of_nodes(), g.number_of_nodes(
         )), f"activated shape: {new_adj.shape}  node num:{g.number_of_nodes()}"
 
+        # new adj
         if not topo_change:
             new_adj = new_adj & g.adj().to_dense().bool()
 
+        # new graph
         new_g = dgl.graph(torch.where(new_adj), num_nodes=g.number_of_nodes())
+
+        # copy data
         new_g.__name__ = g.__name__
 
         for k, v in g.ndata.items():
@@ -61,8 +67,13 @@ class GraphProcessor:
 
         return new_g
 
-    def diffuse_ndata(self, g: dgl.DGLHeteroGraph, key: str = 'feat'):
-        g.update_all(gfn.copy_u('feat', 'm'), gfn.sum('m', 'feat'))
+    def aggregate_ndata(self, g: dgl.DGLHeteroGraph, key: str = 'feat'):
+        """
+            aggregate the g.ndata[key] for a epoch with mean value
+        """
+        dim = g.ndata[key].size(-1)
+        conv = gnn.GraphConv(dim,dim,weight=False, bias=False, activation =None)
+        g.ndata[key] = conv(g,g.ndata[key])
         return g
 
     @abstractmethod
@@ -73,6 +84,8 @@ class GraphProcessor:
         pass
 
 
+
+
 class IC(GraphProcessor):
     def __init__(self,
                  activated_key: str = "IC_activated",
@@ -80,7 +93,8 @@ class IC(GraphProcessor):
                  probability_key: str = "IC_probability",
                  activated_init=Init.Eye(),
                  probability_init=Init.Constant(0.5),
-                 diffuse: bool = False):
+                 sample_times = 2,
+                 aggregate: bool = False):
         super(IC, self).__init__()
         assert issubclass(activated_init.__class__, Init.NodeInitializer)
         assert issubclass(probability_init.__class__, Init.EdgeInitializer)
@@ -89,14 +103,15 @@ class IC(GraphProcessor):
         self.prob_key = probability_key
         self.act_init = activated_init
         self.prob_init = probability_init
-        self.diffuse = diffuse
+        self.samp_times = sample_times
+        self.agg = aggregate
+        self.__name__ = "IC"
 
     def independent_cascade(
         self,
         g: dgl.DGLHeteroGraph,
         stop_situation: str = 'dunbar',
-        sample_times: int = 1,
-    ) -> dgl.DGLHeteroGraph:
+        ) -> dgl.DGLHeteroGraph:
         '''
             Args:
                 g, dgl.DGLHeteroGraph   
@@ -128,7 +143,7 @@ class IC(GraphProcessor):
         assert self.cur_act_key not in g.ndata.keys()
         assert self.prob_key in g.edata.keys()
         assert (g.edata[self.prob_key] >= 0).all()
-        assert sample_times > 0
+        assert self.samp_times > 0
 
         # align types
         g.ndata[self.act_key] = g.ndata[self.act_key].bool()
@@ -143,6 +158,7 @@ class IC(GraphProcessor):
                 1, parallel_num)
         else:
             assert parallel_num == get_parallel_num(g.edata[self.prob_key])
+
 
         # Message Passing
 
@@ -159,12 +175,15 @@ class IC(GraphProcessor):
             updated_activated = torch.full_like(
                 nodes.mailbox['m'][:, 0, :], False,
                 dtype=torch.bool)  # [num_batch,num_parallel]
-            for _ in range(sample_times):
+            for _ in range(self.samp_times):
                 sample = (torch.rand_like(nodes.mailbox['m']) <nodes.mailbox['m']).any(1)  # [num_batch, num_parallel]
                 updated_activated = updated_activated | sample
             cur_activated = updated_activated & (~nodes.data[self.act_key])
             activated = updated_activated | nodes.data[self.act_key]
-            return {self.act_key: activated, self.cur_act_key: cur_activated}
+            return {
+                self.act_key: activated,
+                self.cur_act_key: cur_activated
+                }
 
         if stop_situation == 'dunbar':
             iteration = 0
@@ -210,25 +229,24 @@ class IC(GraphProcessor):
     def __call__(
         self,
         g: dgl.DGLHeteroGraph,
-    ) -> dgl.DGLHeteroGraph:
+        ) -> dgl.DGLHeteroGraph:
         '''
             requires feat in g.ndata
             do not change the key or the graph data during this process
         '''
-        # initialize graph
+        # init graph
         g = dgl.remove_self_loop(g)
         assert self.act_key not in g.ndata
-        assert self.cur_act_key not in g.ndata
         assert self.prob_key not in g.edata
 
         self.act_init(g, self.act_key)
         self.prob_init(g, self.prob_key)
 
-        # run
+        # process on graph
         g = self.independent_cascade(g)
         g = self.new_graph(g, new_key=self.act_key)
-        if self.diffuse:
-            g = self.diffuse_ndata(g, key='feat')
+        if self.agg:
+            g = self.aggregate_ndata(g, key='feat')
 
         return g
 
@@ -242,7 +260,7 @@ class HawkesIC(IC):
                  probability_key: str = "IC_probability",
                  activated_init=Init.Eye(),
                  probability_init=Init.Constant(0.5),
-                 diffuse: bool = False):
+                 aggregate: bool = False):
         super().__init__(activated_key, current_activated_key, probability_key,
                          activated_init, probability_init, diffuse)
 
@@ -356,15 +374,11 @@ class HawkesIC(IC):
         g.ndata.pop(self.cur_act_key)
         return g
 
-    def diffuse_ndata(self, g, key='feat') -> dgl.DGLHeteroGraph:
-        g.update_all(gfn.u_mul_e('feat', self.hawkes_key, 'm'),
-                     gfn.mean('m', 'feat'))
-        return g
 
     def __call__(
         self,
         g: dgl.DGLHeteroGraph,
-    ) -> dgl.DGLHeteroGraph:
+        ) -> dgl.DGLHeteroGraph:
         # initialize graph
         # initialize graph
         g = dgl.remove_self_loop(g)
@@ -375,7 +389,7 @@ class HawkesIC(IC):
         self.act_init(g, self.act_key)
         self.prob_init(g, self.prob_key)
 
-        # run
+        # process on graph
         g = self.independent_cascade(g)
         g = self.new_graph(g,
                            new_key=self.act_key,
@@ -384,7 +398,9 @@ class HawkesIC(IC):
                                g.ndata[self.act_key][torch.where(
                                    g.ndata[self.act_key].bool())]
                            })
-        if self.diffuse:
-            g = self.diffuse_ndata(g, key='feat')
+
+                        
+        if self.agg:
+            g = self.aggregate_ndata(g, key='feat')
 
         return g

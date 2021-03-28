@@ -3,10 +3,12 @@ import time
 import scipy.sparse as sp
 import sklearn.metrics as M
 import torch
+import torch.nn as nn
 import dgl
+import dgl.nn as gnn
 
 from data import dataset
-from module import Net, MLP, LightGCN, MultiGNN
+import net as N
 from diffusion import Processor  as P
 from diffusion import Initializer as Init
 
@@ -30,11 +32,10 @@ class Trainer:
 
     def __init__(self,
                 g: dgl.DGLHeteroGraph,
-                model=MLP,
-                processor=None,
-                loss_fn = 'ce',
-                metric_fn='f1-mic',
-                
+                model:nn.Module=N.MLP,
+                processor:P.GraphProcessor=None,
+                loss_fn:str = 'ce',
+                metric_fn:str='f1-mic',
                 buf:bool  = False
                 ):
         """
@@ -50,21 +51,21 @@ class Trainer:
         """
         self.__check_key(g)
         assert processor is None or issubclass(processor.__class__, P.GraphProcessor)
-        assert issubclass(model.__class__,Net)
+        assert issubclass(model.__class__,N.Net)
 
         assert loss_fn in self.loss_fns.keys()
         assert metric_fn in self.metric_fns.keys()
 
         # check cached
-        if buf and self.has_cache(g.__name__):
-            g = self.load_graph(g.__name__)
+        if buf and self.has_cache(g.__name__) and processor is not None:
+            g = self.load_graph(f"{processor.__name__}_{g.__name__}")
         else:
             if processor is not None:
-                # if cached skill the diffusion
-                g_ = processor(g)
-            if buf:
+                # if cached skip the process
+                g = processor(g)
+            if buf and processor is not None:
                 # if need buf, cache the processed graph
-                self.save_graph(g, g.__name__)
+                self.save_graph(g, f"{processor.__name__}_{g.__name__}")
 
         # split the batch into train, valid, test
         self.g = {}
@@ -109,9 +110,9 @@ class Trainer:
             os.path.join(self.BUF_PATH, f"{prefix}_graph.bin")
         )[0][0]
 
-    def train(self, lr:float=1e-3, epoch:int=100, test:bool=True):
+    def train(self, lr:float=1e-3, epoch:int=100, weight_decay=0, test:bool=True):
 
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr, weight_decay=weight_decay)
 
         self.model.train()
         start = time.time()
@@ -148,19 +149,34 @@ class Trainer:
         metric = self.metric_fn(y_pred, self.g['test'].ndata['label'])
         print(f"test  f1-mic:{metric}, reference time:{end-start}")  
 
+
+
 if __name__ == '__main__':
     
     g = dataset['cora']
     num_feats = g.ndata['feat'].size(-1)
     num_classes = (g.ndata['label'].max() - g.ndata['label'].min() + 1).item()
-
+    
     trainer = Trainer(
         g=g,
-        #processor=P.HawkesIC(diffuse=False, hawkes_decay=0.99),
-        processor=P.IC(diffuse=False),
-        #model = MLP(num_feats, num_classes, num_layers=2, num_hidden=64,batch_norm=True, softmax=True)
-        model = LightGCN(num_feats, num_classes)
+
+        # processor=P.HawkesIC(diffuse=False, hawkes_decay=0.99),
+        processor=P.IC( activated_init=Init.Eye(),
+                        probability_init=Init.Constant(0.5),
+                        sample_times=5,
+                        aggregate=True),
+        # processor = None,
+
+        model = N.MLP(num_feats, num_classes, num_layers=2, num_hidden=128,batch_norm=True, softmax=True)
+        # model = N.LightGCN(num_feats, num_classes)
+        # model= N.MultiGNN(num_feats, num_classes,
+        #         num_layers=1, conv=gnn.SAGEConv,
+        #         conv_arg={"aggregator_type":"mean"})
+        # model=N.MultiGNN(num_feats, num_classes,
+        #           num_layers=2, conv=gnn.GraphConv,
+        #           conv_arg={})
     ) 
     trainer.train(
-            lr = 2e-3,
-            epoch=200)
+            lr=0.001,
+            weight_decay=0.01,
+            epoch=100)

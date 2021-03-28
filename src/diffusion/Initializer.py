@@ -54,7 +54,7 @@ class Eye(NodeInitializer):
             key should be new
         '''
         NodeInitializer.check_key(g, key)
-        g.ndata[key] = torch.full((g.number_of_nodes(), g.number_of_nodes()), True, dtype=dtype)
+        g.ndata[key] = torch.eye(g.number_of_nodes(), dtype=dtype)
         return g
 
 
