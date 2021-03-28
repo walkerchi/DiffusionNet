@@ -7,7 +7,7 @@ import torch.nn as nn
 import dgl
 import dgl.nn as gnn
 
-from data import dataset
+import dataset as D
 import net as N
 from diffusion import Processor  as P
 from diffusion import Initializer as Init
@@ -153,7 +153,7 @@ class Trainer:
 
 if __name__ == '__main__':
     
-    g = dataset['cora']
+    g = D.citeseer()
     num_feats = g.ndata['feat'].size(-1)
     num_classes = (g.ndata['label'].max() - g.ndata['label'].min() + 1).item()
     

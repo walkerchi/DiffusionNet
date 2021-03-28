@@ -3,8 +3,6 @@ import torch
 import dgl
 import dgl.nn as gnn
 import dgl.function as gfn
-import matplotlib.pyplot as plt
-import seaborn as sns
 import numpy as np
 import os
 import diffusion.Initializer as Init
@@ -48,6 +46,7 @@ class GraphProcessor:
         )), f"activated shape: {new_adj.shape}  node num:{g.number_of_nodes()}"
 
         # new adj
+        # This could be optimized further, it's too slow
         if not topo_change:
             new_adj = new_adj & g.adj().to_dense().bool()
 
@@ -201,31 +200,6 @@ class IC(GraphProcessor):
         g.ndata.pop(self.cur_act_key)
         return g
 
-    def vis_activated(self,
-                      g: dgl.DGLHeteroGraph,
-                      activated_key: str = 'IC_activated',
-                      cur_activated_key: str = 'IC_current_activated',
-                      prefix: str = "",
-                      save_dir=None,
-                      show: bool = True):
-        activated = g.ndata[activated_key].clone().cpu().detach().numpy().astype(np.int) if activated_key is not None\
-            else torch.zeros(g.number_of_nodes(),g.number_of_nodes())
-
-        cur_activated = g.ndata[cur_activated_key].clone().cpu().detach().numpy().astype(np.int) if cur_activated_key is not None\
-            else torch.zeros(g.number_of_nodes(),g.number_of_nodes())
-
-        activated_map = activated + cur_activated
-
-        fig = plt.figure(figsize=(10, 8))
-        ax = fig.add_subplot(1, 1, 1)
-        sns.heatmap(activated_map, ax=ax)
-        if save_dir is not None:
-            if not os.path.exists(save_dir):
-                os.mkdir(save_dir)
-            fig.savefig(os.path.join(save_dir, prefix + '.jpg'))
-        if show:
-            fig.show()
-
     def __call__(
         self,
         g: dgl.DGLHeteroGraph,
@@ -272,7 +246,7 @@ class HawkesIC(IC):
         g: dgl.DGLHeteroGraph,
         stop_situation: str = 'dunbar',
         sample_times: int = 1,
-    ) -> dgl.DGLHeteroGraph:
+        ) -> dgl.DGLHeteroGraph:
         '''
             Args:
                 g, dgl.DGLHeteroGraph   
