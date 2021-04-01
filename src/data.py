@@ -81,7 +81,5 @@ def reddit() -> dgl.DGLHeteroGraph:
                                     verbose=False)[0]
     check_key(g)
     g.__name__ = 'reddit'
-    return g 
-
-
+    return g
 

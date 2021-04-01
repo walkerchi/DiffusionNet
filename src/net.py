@@ -49,10 +49,11 @@ class Net(nn.Module):
 """
 class MLP(Net):
     def __init__(self, in_dim: int, out_dim: int,
-                num_layers=2, num_hidden=128,
-                batch_norm:bool=True, softmax:bool=True):
+                 num_layers=2, num_hidden=128,
+                 batch_norm:bool = True, softmax:bool = True):
 
         super(MLP, self).__init__(in_dim, out_dim)
+        self.__name__ = 'MLP'
         __mlp = OrderedDict({})
         i = 0
         if num_layers <= 1:
@@ -73,7 +74,7 @@ class MLP(Net):
                 __mlp[f'bn{i}'] = nn.BatchNorm1d(num_hidden)
             __mlp[f'linear{i}'] = nn.Linear(num_hidden ,out_dim)
             __mlp[f'relu{i}'] = nn.ReLU()
-        
+
         if softmax:
             __mlp['softmax'] = nn.Softmax()
 
@@ -88,6 +89,7 @@ class MLP(Net):
 class LightGCN(Net):
     def __init__(self, in_feats:int, num_classes:int):
         super(LightGCN, self).__init__(in_feats, num_classes)
+        self.__name__ = 'LightGCN'
         self.conv1 = gnn.GraphConv(in_feats, num_classes)
 
     def forward(self, g):
@@ -98,8 +100,8 @@ class LightGCN(Net):
 
 class MultiGNN(Net):
     def __init__(self, in_dim:int, out_dim:int, 
-                        conv, conv_arg:dict={}, 
-                        hid_dim:int=128, num_layers:int=1):
+                 conv, conv_arg: dict = {}, 
+                 hid_dim:int = 16, num_layers:int = 1):
         super().__init__(in_dim, out_dim)
         '''
             in_dim:  dim of feat
@@ -109,6 +111,7 @@ class MultiGNN(Net):
             hid_dim
             num_hid
         '''
+        self.__name__ = 'MultiGNN'
         assert conv in (gnn.GraphConv, gnn.SAGEConv, gnn.GATConv)
 
         self.self_loop = True if conv in (gnn.GraphConv, gnn.GATConv) else False
@@ -130,11 +133,11 @@ class MultiGNN(Net):
             in_dim = hid_dim
 
     def forward(self, g):
-        
-        g = dgl.add_self_loop(g) if self.self_loop else dgl.remove_self_loop(g)
+
+        g = dgl.add_self_loop(g) if self.self_loop else g
 
         h = g.ndata['feat']
         for conv in self.__convs:
             h = conv(g, h)
-        
+
         return h

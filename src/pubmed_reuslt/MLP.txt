@@ -1,0 +1,2 @@
+total time for training:2.5622360706329346
+test  f1-mic:0.7410000000000001, reference time:0.0005500316619873047

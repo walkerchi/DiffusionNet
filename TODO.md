@@ -1,12 +1,14 @@
 
 
 
-| 任务 | 状态 |
-|:---:|:----:|
-|修改conda源|$\checkmark$|
-|创建conda环境|$\checkmark$|
-|下载Reddit|$\checkmark$|
-|下载Weibo||
+|     任务       |    状态      |
+|:--------------:|:------------:|
+|  修改conda源   | $\checkmark$ |
+| 创建conda环境  | $\checkmark$ |
+| 下载DGL数据集  | $\checkmark$ |
+|   下载Weibo    |              |
+|    跑Reddit    |              |
+|    跑Weibo     |              |
 
 
 
