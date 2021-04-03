@@ -6,8 +6,11 @@
 #include <iostream>
 #include <random>
 #include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 #include <ctime>
+#include <fstream>
+
 #include "debug.h"
 
 namespace py = pybind11;
@@ -21,7 +24,7 @@ namespace IC{
         bool topo_change,
         int sample_times,  // sample times must >= 1
         int dunbar   // dunbar must be positive
-    ){
+        ){
         /*
          initailize
         */
@@ -164,8 +167,139 @@ namespace IC{
         std::array<at::Tensor,2> new_edge = {new_src, new_dst};
         return new_edge;
     }
+
+
+
+    std::array<py::array_t<int>, 2> ic_fast_cpu(
+        py::array_t<int> adj_indptr_arr,
+        py::array_t<int> adj_indices_arr,
+        py::array_t<float> prob_arr,
+        bool topo_change,
+        int sample_times,
+        int dunbar
+        ){
+        
+        //init 
+        /*
+        for sparse csr matric
+        indptr represent the num_node per row
+        indices represent the col of each nonezero
+        M[u][v] -> v in M.indices[M.indptr[u]] to M.indices[N.indptr[u+1]]
+        */
+        Timer t;
+        t.begin();
+
+        py::buffer_info adj_indptr_buf = adj_indptr_arr.request();
+        py::buffer_info adj_indices_buf = adj_indices_arr.request();
+        int* adj_indptr = (int*)adj_indptr_buf.ptr;
+        int* adj_indices = (int*)adj_indices_buf.ptr;
+        float* prob = (float*)prob_arr.request().ptr;
+        int num_node = adj_indptr_buf.shape[0] - 1;
+        int num_edge = adj_indices_buf.shape[0];
+        std::random_device rd;
+        std::default_random_engine eng(rd());
+        std::uniform_real_distribution<> distr(0,1);
+        int cur_node;
+        int i,j;
+
+        std::vector<int> new_adj_indptr(num_node+1);
+        std::vector<int> new_adj_indices;
+
+        std::cout<<"num_node:"<<num_node<<std::endl;
+        std::cout<<"num_edge:"<<num_edge<<std::endl;
+        std::cout<<"init ";
+        t.end();
+
+        // for(i=0;i<num_edge;++i)
+        //     std::cout<<adj_indices[i]<<",";
+        // std::cout<<std::endl;
+        // exit(1);
+
+        t.begin();
+        //diffusion
+        for(cur_node=0; cur_node<num_node; ++cur_node){
+            //std::cout<<"node:"<<cur_node<<std::endl;
+            // for each node
+            int num_act = 0;
+            std::queue<int> cur_act;
+            cur_act.push(cur_node);
+            while(!cur_act.empty() && num_act < dunbar){
+                int u = cur_act.front(); 
+                cur_act.pop();
+
+                for(int v_ind = adj_indptr[cur_node]; 
+                    v_ind < adj_indptr[cur_node+1] && num_act < dunbar;
+                    ++v_ind ){
+                        int v = adj_indices[v_ind];
+                        //std::cout<<v<<",";
+                        float p = prob[v_ind];
+                        // for each neighbor
+                        for(i=0; i<sample_times && distr(eng)<p; ++i){
+                            // std::cout<<"here"<<std::endl;
+                            /* 
+                            assert v is not in act
+                            */
+                            for(j=0;j<num_act;++j){
+                                if(new_adj_indices[new_adj_indptr[cur_node]+j] == v)
+                                    break;
+                            }
+                            /* 
+                            act the node
+                            */
+                            new_adj_indices.push_back(v);
+                            cur_act.push(v);
+                            ++num_act;
+
+                        /*
+                        end sample loop
+                        */
+                        }
+                        
+                    /* 
+                    end neighbor loop
+                    */
+                    }
+            
+            /*
+            end diffusion loop
+            */
+            }
+
+            new_adj_indptr[cur_node+1] = num_act+new_adj_indptr[cur_node];
+            
+        // end node loop
+        }
+        std::cout<<"diffuse ";
+        t.end();
+
+
+        t.begin();
+        // transfer
+        py::array_t<int> new_adj_indptr_arr  = py::array_t<int>(new_adj_indptr.size());
+        py::buffer_info new_adj_indptr_buf = new_adj_indptr_arr.request();
+        memcpy(new_adj_indptr_buf.ptr,new_adj_indptr.data(), sizeof(int)*new_adj_indptr.size());
+        //new_adj_indptr_buf.ptr = (void*)new_adj_indptr.data();
+        py::array_t<int> new_adj_indices_arr = py::array_t<int>(new_adj_indices.size());
+        py::buffer_info new_adj_indices_buf = new_adj_indices_arr.request();
+        memcpy(new_adj_indices_buf.ptr, new_adj_indices.data(), sizeof(int)*new_adj_indices.size());
+        //new_adj_indices_buf.ptr = (void*)new_adj_indices.data();
+
+        // std::ofstream log_file("debug.log",std::ios::out);
+        // for(i=0;i<new_adj_indptr.size();++i)
+        //     log_file<<((int*)new_adj_indptr_arr.request().ptr)[i]<<",";
+        // log_file<<std::endl<<std::endl;
+        // log_file.close();
+        // exit(1);
+
+        std::array<py::array_t<int>,2> out = {new_adj_indptr_arr, new_adj_indices_arr};
+
+        std::cout<<"transfer ";
+        t.end();
+        return out;
+    }   
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m){
     m.def("ic_slow_cpu",&IC::ic_slow_cpu,py::return_value_policy::reference);
+    m.def("ic_fast_cpu",&IC::ic_fast_cpu,py::return_value_policy::reference);
 }

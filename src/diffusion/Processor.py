@@ -1,6 +1,5 @@
 from abc import abstractmethod
 import torch
-from torch.utils.cpp_extension import load
 import dgl
 import dgl.nn as gnn
 import dgl.function as gfn
@@ -9,6 +8,7 @@ import os
 import sys
 
 import diffusion.Initializer as Init
+import diffusion.ic_api as api
 """
     GraphProcessor is the heart of the project, 
     it set rules for how the diffusion happens.
@@ -266,12 +266,10 @@ class IC_cpp(GraphProcessor):
         currently only support cpu
         '''
 
-        prefix = os.path.join(*os.path.split(sys.argv[0])[:-1])
+        
         # load cpp_module
-        cpp_module = load(name="ic_cpp",
-                    sources=[os.path.join(prefix,"diffusion/ic.cpp"), os.path.join(prefix,"diffusion/debug.cpp")],
-                    verbose=verbose)
-        self.ic = cpp_module.ic_slow_cpu
+
+        self.ic = api.ic_slow_cpu
 
         self.prob_init = probability_init
         self.topo_change = topo_change
@@ -290,18 +288,14 @@ class IC_cpp(GraphProcessor):
     
 
         # diffuse
-        new_edge = self.ic(g.number_of_nodes(),
-                g.edges()[0],
-                g.edges()[1],
-                self.prob_init(g),
-                self.topo_change,
-                self.samp_times,
-                150
+        g = api.ic_fast_cpu(
+                g,
+                self.prob_init(g)
                 )
     
         # print(new_edge)
         # copy ndata
-        g = dgl.graph(tuple(new_edge), num_nodes=g.number_of_nodes()).to(device)
+        g = g.to(device)
         for k,v in ndata.items():
             if k == "feat" or k=='label' or k.endswith('mask'):
                 g.ndata[k] = v

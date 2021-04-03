@@ -1,29 +1,18 @@
-# include <vector>
-# include <iostream>
-# include <ctime>
-# include <fstream>
-
-# define DUMP 0
-
-template<typename T>
-void print_brief(std::vector<std::vector<T>> adj);
-
-
-template<typename T>
-void log_2d(std::vector<std::vector<T>> prob);
+#include <ctime>
+#include <iostream>
 
 class Timer{
-
-    clock_t st_time;
+    private:
+        clock_t start;
     public:
-        void begin(){ // start clocking
-            this->st_time = clock();
-        }
-        float end(bool verbose=true){ // end clocking
-            clock_t finish = clock();
-            float duration = (double)(finish - this->st_time) / CLOCKS_PER_SEC;
-            if(verbose) 
-                std::cout<<"consums:"<<duration<<"s"<<std::endl;
-            return duration;
-        }
+    void begin(){
+        start = clock();
+    }
+
+    double end(){
+        clock_t finish = clock();
+        double duration;
+        duration = (double)(finish-start)/CLOCKS_PER_SEC;
+        std::cout<<"consumes:"<<duration<<"s"<<std::endl;
+    }
 };
